@@ -1,14 +1,17 @@
 import { API_URL } from "@/src/api/apiUrl";
+import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Image,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -20,7 +23,6 @@ interface CategoryGroup {
   category_description?: string;
   items: MenuItem[];
 }
-
 interface CartItem {
   menu_item: MenuItem;
   quantity: number;
@@ -28,16 +30,20 @@ interface CartItem {
 
 export default function HomeScreen() {
   const [menu, setMenu] = useState<CategoryGroup[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartVisible, setCartVisible] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [discountCode, setDiscountCode] = useState("");
+  const [discount, setDiscount] = useState(0);
   const [orderSuccess, setOrderSuccess] = useState(false);
+
   useEffect(() => {
     const fetchMenu = async () => {
       try {
         const { data } = await client.get("/menu");
-
         const grouped: Record<string, MenuItem[]> = {};
+
         data.forEach((item: MenuItem) => {
           const category = item.category_name || "Uncategorized";
           if (!grouped[category]) grouped[category] = [];
@@ -46,7 +52,8 @@ export default function HomeScreen() {
 
         const groupedArray = Object.keys(grouped).map((category) => ({
           category_name: category,
-           category_description: grouped[category][0]?.category_description ?? "",
+          category_description:
+            grouped[category][0]?.category_description ?? "",
           items: grouped[category],
         }));
 
@@ -67,9 +74,8 @@ export default function HomeScreen() {
         return prev.map((i) =>
           i.menu_item.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
         );
-      } else {
-        return [...prev, { menu_item: item, quantity: 1 }];
       }
+      return [...prev, { menu_item: item, quantity: 1 }];
     });
   };
 
@@ -83,26 +89,40 @@ export default function HomeScreen() {
     );
   };
 
-  const cartTotal = cart.reduce(
+  const subtotal = cart.reduce(
     (sum, i) => sum + i.menu_item.price * i.quantity,
     0
   );
+  const total = subtotal - discount;
+
+  const applyDiscount = () => {
+    if (discountCode.toLowerCase() === "save20") {
+      setDiscount(subtotal * 0.2);
+      Alert.alert("Discount Applied", "20% off your order!");
+    } else {
+      setDiscount(0);
+      Alert.alert("Invalid Code", "Try SAVE20 for 20% off.");
+    }
+  };
 
   const handlePlaceOrder = async () => {
-    if (!cart.length) return;
+    if (!cart.length) return Alert.alert("Cart empty", "Add items first.");
+
     try {
       const items = cart.map((i) => ({
         menu_item_id: i.menu_item.id,
         quantity: i.quantity,
       }));
 
-      const discount_type = "none";
-      const payment_method = "cash";
+      await client.post("/orders", {
+        items,
+        discount_type: discount > 0 ? "SAVE20" : "none",
+        payment_method: "cash",
+      });
 
-      await client.post("/orders", { items, discount_type, payment_method });
-
-      // Show success modal instead of Alert
       setCart([]);
+      setDiscount(0);
+      setDiscountCode("");
       setCartVisible(false);
       setOrderSuccess(true);
     } catch (error) {
@@ -121,108 +141,110 @@ export default function HomeScreen() {
 
   return (
     <>
-      <Modal visible={orderSuccess} animationType="fade" transparent={true}>
-        <View style={styles.successOverlay}>
-          <View style={styles.successModal}>
-            <Text style={styles.successIcon}>✅</Text>
-            <Text style={styles.successTitle}>Order Placed!</Text>
-            <Text style={styles.successText}>
-              Your order has been successfully placed. Thank you!
+      <LinearGradient colors={["#ff8c42", "#ff6f3c"]} style={styles.headerBar}>
+        <Text style={styles.headerText}>🍔 ChibTime</Text>
+        <Text style={styles.headerSubtitle}>Order your cravings fast!</Text>
+      </LinearGradient>
+
+      <View style={styles.categoryTabsContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoryTabs}
+        >
+          {menu.map((cat) => {
+            const isActive = selectedCategory === cat.category_name;
+            return (
+              <TouchableOpacity
+                key={cat.category_name}
+                style={[styles.tabButton, isActive && styles.tabButtonActive]}
+                onPress={() =>
+                  setSelectedCategory(isActive ? null : cat.category_name)
+                }
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[styles.tabLabel, isActive && styles.tabLabelActive]}
+                >
+                  {cat.category_name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      <FlatList
+        data={
+          selectedCategory
+            ? menu.find((m) => m.category_name === selectedCategory)?.items ||
+              []
+            : menu.flatMap((m) => m.items)
+        }
+        numColumns={2}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.menuGrid}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.card}
+            activeOpacity={0.9}
+            onPress={() => addToCart(item)}
+          >
+            {item.image_url ? (
+              <Image
+                source={{
+                  uri: `${API_URL.replace(
+                    /\/api\/?$/,
+                    ""
+                  )}/${item.image_url?.replace(/^\/?/, "")}`,
+                }}
+                style={styles.image}
+              />
+            ) : (
+              <View style={styles.imagePlaceholder}>
+                <Text style={{ color: "#aaa" }}>No image</Text>
+              </View>
+            )}
+            <Text style={styles.itemName}>{item.name}</Text>
+            <Text style={styles.itemPrice}>
+              {typeof item.price === "number" ? item.price.toFixed(2) : "0.00"}
             </Text>
             <TouchableOpacity
-              style={styles.successButton}
-              onPress={() => setOrderSuccess(false)}
+              style={styles.addButton}
+              onPress={() => addToCart(item)}
             >
-              <Text style={styles.successButtonText}>Continue Shopping</Text>
+              <Text style={styles.addButtonText}>Add to Cart</Text>
             </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        <Text style={styles.header}>🍔 ChibTime Menu</Text>
+          </TouchableOpacity>
+        )}
+      />
 
-        {menu.map((category) => (
-          <View key={category.category_name} style={styles.categorySection}>
-            <Text style={styles.categoryTitle}>{category.category_name}</Text>
-            <Text style={styles.categoryDesc}>
-              {category.category_description ?? ""}
-            </Text>
-
-            <View style={styles.grid}>
-              {category.items.map((item) => (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.card}
-                  activeOpacity={0.8}
-                  onPress={() => addToCart(item)}
-                >
-                  {item.image_url ? (
-                    <Image
-                      source={{
-                        uri: `${API_URL.replace(
-                          /\/api\/?$/,
-                          ""
-                        )}/${item.image_url?.replace(/^\/?/, "")}`,
-                      }}
-                      style={styles.image}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View style={styles.imagePlaceholder}>
-                      <Text style={{ color: "#aaa" }}>No image</Text>
-                    </View>
-                  )}
-
-                  <View style={styles.cardContent}>
-                    <Text style={styles.itemName} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <Text style={styles.itemDesc} numberOfLines={2}>
-                      {item.description}
-                    </Text>
-                    <Text style={styles.itemPrice}>
-                      ₱{Number(item.price || 0).toFixed(2)}
-                    </Text>
-
-                    <TouchableOpacity
-                      style={styles.addButton}
-                      onPress={() => addToCart(item)}
-                    >
-                      <Text style={styles.addButtonText}>Add to Cart</Text>
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        ))}
-      </ScrollView>
-
-      {/* Floating Cart Button */}
       {cart.length > 0 && (
         <TouchableOpacity
           style={styles.cartButton}
           onPress={() => setCartVisible(true)}
         >
-          <Text style={styles.cartButtonText}>🛒 {cartTotal.toFixed(2)}</Text>
+          <Text style={styles.cartButtonText}>
+            🛒 {cart.length} items • ₱{total.toFixed(2)}
+          </Text>
         </TouchableOpacity>
       )}
 
       {/* Cart Modal */}
-      <Modal visible={cartVisible} animationType="slide" transparent={true}>
+      <Modal visible={cartVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.cartModal}>
-            <Text style={styles.cartTitle}>Your Cart</Text>
-            <ScrollView style={{ maxHeight: 300 }}>
+            <Text style={styles.cartTitle}>🛍️ Your Cart</Text>
+            <ScrollView style={{ maxHeight: 280 }}>
               {cart.map((i) => (
                 <View key={i.menu_item.id} style={styles.cartItem}>
-                  <Text>{i.menu_item.name}</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text style={styles.cartItemText}>{i.menu_item.name}</Text>
+                  <View style={styles.qtyControl}>
                     <TouchableOpacity
                       onPress={() => removeFromCart(i.menu_item)}
                       style={styles.qtyButton}
                     >
-                      <Text style={{ color: "#fff" }}>-</Text>
+                      <Text style={{ color: "#fff" }}>−</Text>
                     </TouchableOpacity>
                     <Text style={{ marginHorizontal: 8 }}>{i.quantity}</Text>
                     <TouchableOpacity
@@ -236,15 +258,32 @@ export default function HomeScreen() {
                 </View>
               ))}
             </ScrollView>
-            <Text style={styles.total}>Total: ₱{cartTotal.toFixed(2)}</Text>
+
+            <View style={styles.discountRow}>
+              <TextInput
+                placeholder="Promo code"
+                placeholderTextColor="#aaa"
+                style={styles.discountInput}
+                value={discountCode}
+                onChangeText={setDiscountCode}
+              />
+              <Pressable style={styles.applyBtn} onPress={applyDiscount}>
+                <Text style={styles.applyText}>Apply</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.total}>Subtotal: ₱{subtotal.toFixed(2)}</Text>
+            {discount > 0 && (
+              <Text style={styles.discountText}>− ₱{discount.toFixed(2)}</Text>
+            )}
+            <Text style={styles.finalTotal}>Total: ₱{total.toFixed(2)}</Text>
+
             <Pressable style={styles.placeOrder} onPress={handlePlaceOrder}>
-              <Text style={styles.placeOrderText}>Place Order</Text>
+              <Text style={styles.placeOrderText}>Confirm Order</Text>
             </Pressable>
+
             <Pressable
-              style={[
-                styles.placeOrder,
-                { backgroundColor: "#ccc", marginTop: 10 },
-              ]}
+              style={[styles.placeOrder, { backgroundColor: "#ccc" }]}
               onPress={() => setCartVisible(false)}
             >
               <Text style={[styles.placeOrderText, { color: "#333" }]}>
@@ -254,86 +293,89 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Order Success */}
+      <Modal visible={orderSuccess} animationType="fade" transparent>
+        <View style={styles.successOverlay}>
+          <View style={styles.successModal}>
+            <Text style={styles.successIcon}>✅</Text>
+            <Text style={styles.successTitle}>Order Placed!</Text>
+            <Text style={styles.successText}>
+              Your order has been placed successfully.
+            </Text>
+            <TouchableOpacity
+              style={styles.successButton}
+              onPress={() => setOrderSuccess(false)}
+            >
+              <Text style={styles.successButtonText}>Continue Shopping</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fffaf4", padding: 16 },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  header: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#ff6f3c",
-    textAlign: "center",
-    marginBottom: 25,
-  },
-  categorySection: { marginBottom: 30 },
-  categoryTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#2e2e2e",
-    marginBottom: 12,
-  },
-  categoryDesc: {
-    fontSize: 14,
-    color: "#777",
-    marginBottom: 12,
-    lineHeight: 18,
-    fontStyle: "italic",
-  },
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
+  headerBar: { paddingTop: 60, paddingBottom: 20, alignItems: "center" },
+  headerText: { color: "#fff", fontSize: 28, fontWeight: "800" },
+  headerSubtitle: { color: "#fff", fontSize: 14, opacity: 0.9 },
+  menuGrid: { padding: 12 },
   card: {
+    flex: 1,
     backgroundColor: "#fff",
-    width: "48%",
     borderRadius: 16,
-    marginBottom: 16,
-    overflow: "hidden",
+    margin: 8,
     shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 6,
-    elevation: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+    paddingBottom: 10,
   },
-  image: { width: "100%", height: 120 },
+  image: {
+    width: "100%",
+    height: 120,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
   imagePlaceholder: {
     width: "100%",
     height: 120,
-    backgroundColor: "#f5f5f5",
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#eee",
   },
-  cardContent: { padding: 10 },
-  itemName: { fontSize: 16, fontWeight: "600", color: "#2e2e2e" },
-  itemDesc: { fontSize: 13, color: "#777", marginVertical: 4 },
+  itemName: {
+    fontWeight: "600",
+    fontSize: 16,
+    marginTop: 10,
+    paddingHorizontal: 10,
+  },
   itemPrice: {
-    fontSize: 15,
-    fontWeight: "bold",
     color: "#ff6f3c",
-    marginBottom: 6,
+    fontWeight: "700",
+    fontSize: 15,
+    paddingHorizontal: 10,
   },
   addButton: {
     backgroundColor: "#ff6f3c",
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 10,
+    marginHorizontal: 10,
+    marginTop: 5,
     alignItems: "center",
   },
-  addButtonText: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  addButtonText: { color: "#fff", fontWeight: "600" },
   cartButton: {
     position: "absolute",
-    bottom: 30,
+    bottom: 25,
     right: 20,
     backgroundColor: "#ff6f3c",
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 30,
+    padding: 15,
+    borderRadius: 40,
     elevation: 6,
   },
-  cartButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  cartButtonText: { color: "#fff", fontWeight: "700" },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -341,25 +383,53 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cartModal: {
-    width: "90%",
     backgroundColor: "#fff",
     borderRadius: 20,
     padding: 20,
+    width: "90%",
   },
-  cartTitle: { fontSize: 20, fontWeight: "700", marginBottom: 15 },
+  cartTitle: { fontSize: 20, fontWeight: "700", marginBottom: 10 },
   cartItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 10,
   },
+  cartItemText: { flex: 1, fontWeight: "600" },
+  qtyControl: { flexDirection: "row", alignItems: "center" },
   qtyButton: {
     backgroundColor: "#ff6f3c",
     paddingHorizontal: 10,
-    paddingVertical: 3,
     borderRadius: 6,
   },
-  total: { fontSize: 18, fontWeight: "700", marginTop: 10, textAlign: "right" },
+  discountRow: { flexDirection: "row", alignItems: "center", marginTop: 10 },
+  discountInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 10,
+  },
+  applyBtn: {
+    backgroundColor: "#ff6f3c",
+    padding: 10,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  applyText: { color: "#fff", fontWeight: "600" },
+  total: { textAlign: "right", marginTop: 10, fontWeight: "600" },
+  discountText: {
+    textAlign: "right",
+    color: "green",
+    fontWeight: "600",
+    marginTop: 5,
+  },
+  finalTotal: {
+    textAlign: "right",
+    marginTop: 8,
+    fontWeight: "700",
+    fontSize: 16,
+  },
   placeOrder: {
     backgroundColor: "#ff6f3c",
     paddingVertical: 12,
@@ -367,7 +437,7 @@ const styles = StyleSheet.create({
     marginTop: 15,
     alignItems: "center",
   },
-  placeOrderText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  placeOrderText: { color: "#fff", fontWeight: "700" },
   successOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -375,39 +445,44 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   successModal: {
-    width: "80%",
     backgroundColor: "#fff",
     borderRadius: 20,
     padding: 30,
-    justifyContent: "center",
+    width: "80%",
     alignItems: "center",
-    elevation: 10,
   },
-  successIcon: {
-    fontSize: 48,
-    marginBottom: 15,
-  },
-  successTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#2e2e2e",
-    marginBottom: 10,
-  },
-  successText: {
-    fontSize: 16,
-    color: "#555",
-    textAlign: "center",
-    marginBottom: 20,
-  },
+  successIcon: { fontSize: 50 },
+  successTitle: { fontSize: 22, fontWeight: "700", marginVertical: 10 },
+  successText: { textAlign: "center", color: "#555", marginBottom: 15 },
   successButton: {
     backgroundColor: "#ff6f3c",
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 25,
     borderRadius: 25,
   },
-  successButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
+  successButtonText: { color: "#fff", fontWeight: "700" },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fffaf4",
   },
+  categoryTabsContainer: {
+    backgroundColor: "#fff",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  categoryTabs: { paddingHorizontal: 10, alignItems: "center" },
+  tabButton: {
+    backgroundColor: "#f7f7f7",
+    borderRadius: 25,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    marginHorizontal: 6,
+    elevation: 2,
+  },
+  tabButtonActive: { backgroundColor: "#ff6f3c" },
+  tabLabel: { color: "#555", fontWeight: "600", fontSize: 15 },
+  tabLabelActive: { color: "#fff", fontWeight: "700" },
 });

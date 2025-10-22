@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  FlatList,
+  RefreshControl,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
-  View,
+  View
 } from "react-native";
 import client from "../../src/api/client";
 
@@ -29,130 +31,192 @@ interface Order {
 export default function OrdersScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchOrders = useCallback(async () => {
+    try {
+      const { data } = await client.get("/orders");
+      setOrders(data);
+    } catch (error) {
+      console.error("Orders fetch error:", error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchOrders = async () => {
-      try {
-        const { data } = await client.get("/orders");
-        setOrders(data);
-      } catch (error) {
-        console.error("Orders fetch error:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchOrders();
-  }, []);
+  }, [fetchOrders]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchOrders();
+  }, [fetchOrders]);
 
   if (loading)
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+      <SafeAreaView style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#ff6f3c" />
-        <Text style={{ marginTop: 10, color: "#555" }}>Loading orders...</Text>
+        <Text style={styles.loadingText}>Loading your orders...</Text>
       </SafeAreaView>
     );
 
   if (!orders.length)
     return (
-      <SafeAreaView style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>No orders yet.</Text>
+      <SafeAreaView style={styles.centerContainer}>
+        <Text style={styles.emptyText}>You haven’t placed any orders yet 🧾</Text>
       </SafeAreaView>
     );
 
+  const renderOrderCard = ({ item }: { item: Order }) => (
+    <Animated.View style={styles.orderCard}>
+      <View style={styles.orderHeader}>
+        <Text style={styles.orderTitle}>Order #{item.id}</Text>
+        <Text style={styles.orderDate}>
+          {new Date(item.created_at).toLocaleString()}
+        </Text>
+      </View>
+
+      {item.items.map((orderItem) => (
+        <View key={orderItem.id} style={styles.orderItemRow}>
+          <Text style={styles.itemName}>{orderItem.name}</Text>
+          <Text style={styles.itemQty}>x{orderItem.quantity}</Text>
+          <Text style={styles.itemPrice}>
+            ₱{(orderItem.price * orderItem.quantity).toFixed(2)}
+          </Text>
+        </View>
+      ))}
+
+      <View style={styles.summaryContainer}>
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryLabel}>Subtotal</Text>
+          <Text>₱{Number(item.totalAmount ?? 0).toFixed(2)}</Text>
+        </View>
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryLabel}>Discount</Text>
+          <Text>-₱{Number(item.discountAmount ?? 0).toFixed(2)}</Text>
+        </View>
+        <View style={styles.summaryRow}>
+          <Text style={styles.finalLabel}>Total</Text>
+          <Text style={styles.finalLabel}>₱{Number(item.finalAmount ?? 0).toFixed(2)}</Text>
+        </View>
+        <View style={styles.paymentRow}>
+          <Text style={styles.paymentMethod}>{item.payment_method}</Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={{ paddingBottom: 30 }}
+      <FlatList
+        data={orders}
+        renderItem={renderOrderCard}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={{ padding: 16, paddingBottom: 50 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         showsVerticalScrollIndicator={false}
-      >
-        {orders.map((order) => (
-          <View key={order.id} style={styles.orderCard}>
-            <Text style={styles.orderTitle}>Order #{order.id}</Text>
-            <Text style={styles.orderDate}>
-              {new Date(order.created_at).toLocaleString()}
-            </Text>
-
-            {order.items.map((item) => (
-              <View key={item.id} style={styles.orderItem}>
-                <Text style={styles.itemName}>
-                  {item.name ?? "Unnamed item"}
-                </Text>
-                <Text style={styles.itemQty}>x{item.quantity ?? 0}</Text>
-                <Text style={styles.itemPrice}>
-                  ₱{((item.price ?? 0) * (item.quantity ?? 0)).toFixed(2)}
-                </Text>
-              </View>
-            ))}
-
-            <View style={styles.orderSummary}>
-              <View style={styles.summaryRow}>
-                <Text>Total:</Text>
-                <Text>₱{Number(order.totalAmount ?? "0").toFixed(2)}</Text>
-              </View>
-
-              <View style={styles.summaryRow}>
-                <Text>Discount:</Text>
-                <Text>₱{Number(order.discountAmount ?? "0").toFixed(2)}</Text>
-              </View>
-
-              <View style={styles.summaryRow}>
-                <Text style={styles.finalAmount}>Final:</Text>
-                <Text style={styles.finalAmount}>
-                  ₱{Number(order.finalAmount ?? "0").toFixed(2)}
-                </Text>
-              </View>
-
-              <View style={styles.summaryRow}>
-                <Text>Payment:</Text>
-                <Text>{order.payment_method ?? "N/A"}</Text>
-              </View>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#fffaf4" },
-  container: { flex: 1, paddingHorizontal: 16 },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  emptyContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  emptyText: { fontSize: 18, color: "#777" },
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#fffaf4",
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 10,
+    color: "#777",
+    fontSize: 15,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: "#888",
+  },
   orderCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 16,
-    marginBottom: 20,
-    marginTop: 10,
+    marginBottom: 18,
     shadowColor: "#000",
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.1,
     shadowOffset: { width: 0, height: 2 },
     shadowRadius: 6,
-    elevation: 4,
+    elevation: 3,
   },
-  orderTitle: { fontSize: 18, fontWeight: "700", color: "#ff6f3c" },
-  orderDate: { fontSize: 13, color: "#555", marginBottom: 10 },
-  orderItem: {
+  orderHeader: {
+    marginBottom: 8,
+  },
+  orderTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#ff6f3c",
+  },
+  orderDate: {
+    fontSize: 13,
+    color: "#888",
+  },
+  orderItemRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  itemName: {
+    flex: 1,
+    fontSize: 15,
+    color: "#333",
+  },
+  itemQty: {
+    fontSize: 14,
+    color: "#777",
+    width: 40,
+    textAlign: "center",
+  },
+  itemPrice: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#ff6f3c",
+  },
+  summaryContainer: {
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    marginTop: 8,
+    paddingTop: 8,
+  },
+  summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 4,
   },
-  itemName: { fontSize: 15, color: "#2e2e2e", flex: 1 },
-  itemQty: { fontSize: 14, color: "#555", marginHorizontal: 10 },
-  itemPrice: { fontSize: 15, fontWeight: "700", color: "#ff6f3c" },
-  orderSummary: {
-    marginTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#eee",
-    paddingTop: 10,
+  summaryLabel: {
+    color: "#666",
   },
-  finalAmount: { fontSize: 16, fontWeight: "700", color: "#ff6f3c" },
-  summaryRow: {
-  flexDirection: "row",
-  justifyContent: "space-between",
-  marginBottom: 4,
-},
+  finalLabel: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#ff6f3c",
+  },
+  paymentRow: {
+    marginTop: 6,
+    alignItems: "flex-end",
+  },
+  paymentMethod: {
+    fontSize: 13,
+    color: "#555",
+    backgroundColor: "#ffecd6",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
 });

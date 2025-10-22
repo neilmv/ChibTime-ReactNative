@@ -80,10 +80,15 @@ router.post("/", authenticateToken, async (req, res) => {
       totalAmount += menuItems[0].price * item.quantity;
     }
 
-    let discountAmount =
-      discount_type && discount_type !== "none" ? totalAmount * 0.2 : 0;
-    const finalAmount = totalAmount - discountAmount;
+    let discountAmount = 0;
 
+    if (discount_type && discount_type.toLowerCase() === "save20") {
+      discountAmount = totalAmount * 0.2;
+    } else if (discount_type && discount_type.toLowerCase() === "loyalty") {
+      discountAmount = 50;
+    }
+
+    const finalAmount = totalAmount - discountAmount;
     await connection.beginTransaction();
 
     const [orderResult] = await connection.query(

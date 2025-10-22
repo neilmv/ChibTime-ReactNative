@@ -2,7 +2,7 @@ const express = require("express");
 const pool = require("../config/db");
 const router = express.Router();
 
-// Get all menu items
+
 router.get("/", async (req, res) => {
   try {
     const [items] = await pool.query(`
@@ -10,7 +10,7 @@ router.get("/", async (req, res) => {
         m.id,
         m.name,
         m.description,
-        CAST(m.price AS DECIMAL(10,2)) AS price,
+        m.price,
         m.image_url,
         m.is_available,
         c.name AS category_name,
@@ -20,12 +20,19 @@ router.get("/", async (req, res) => {
       WHERE m.is_available = TRUE
       ORDER BY c.name, m.name
     `);
-    res.json(items);
+
+    const formatted = items.map((item) => ({
+      ...item,
+      price: item.price ? parseFloat(item.price) : 0,
+    }));
+
+    res.json(formatted);
   } catch (error) {
     console.error("Menu error:", error);
     res.status(500).json({ error: "Failed to fetch menu items" });
   }
 });
+
 
 // Get menu items by category
 router.get("/category/:categoryId", async (req, res) => {

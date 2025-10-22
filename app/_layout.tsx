@@ -26,7 +26,7 @@ export default function RootLayout() {
     const verifyAuth = async () => {
       try {
         const token = await AsyncStorage.getItem("token");
-        console.log("Token found:", token);
+        // console.log("Token found:", token);
 
         if (token) {
           if (segments[0] !== "(tabs)") {
